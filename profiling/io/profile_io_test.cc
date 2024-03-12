@@ -9,7 +9,7 @@
 
 #include "gtest/gtest.h"
 
-constexpr char kCPUProfileSample[] = "./fust/fustsdk/profiling/cpu_profile_sample";
+constexpr char kCPUProfileSample[] = "./profiling/io/cpu_profile_sample";
 
 using namespace pprofcpp;
 

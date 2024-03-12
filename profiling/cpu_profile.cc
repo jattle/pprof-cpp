@@ -11,7 +11,7 @@
 
 #include "fmt/format.h"
 
-#include "fust/fustsdk/profiling/profile_symbol.h"
+#include "profiling/symbol/profile_symbol.h"
 
 namespace pprofcpp {
 

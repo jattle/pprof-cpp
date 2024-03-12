@@ -10,7 +10,7 @@
 
 using namespace pprofcpp;
 
-constexpr char kCPUProfileSample[] = "./fust/fustsdk/profiling/cpu_profile_sample";
+constexpr char kCPUProfileSample[] = "./profiling/io/cpu_profile_sample";
 
 static constexpr char kLib1[] = {"/usr/lib64/lib1.so"};
 static constexpr char kLib2[] = {"/usr/lib64/lib2.so"};

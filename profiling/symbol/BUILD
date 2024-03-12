@@ -26,13 +26,15 @@ cc_library(
     name = "profile_symbol",
     hdrs = ["profile_symbol.h"],
     srcs = ["profile_symbol.cc"],
-    deps = select({
+    deps = [
+        "@fmtlib//:fmtlib",
+        "//profiling/util:utils",
+            ] +
+    select({
         ":is_linux": [
-          "@fmtlib//:fmtlib",
         ],
         ":is_macos": [
             "@macos_includes//:includes",
-          "@fmtlib//:fmtlib",
         ],
     }),
     linkopts = ["-lbfd","-liberty"],
@@ -42,7 +44,7 @@ cc_test(
     name = "profile_symbol_test",
     srcs = ["profile_symbol_test.cc"],
     copts = ["-fno-access-control"],
-    data = ["cpu_profile_sample"],
+    data = ["//profiling/io:cpu_profile_sample"],
     deps = [
         ":profile_symbol",
         "@com_google_googletest//:gtest_main",

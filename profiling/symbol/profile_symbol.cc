@@ -13,6 +13,8 @@
 
 #include "fmt/format.h"
 
+#include "profiling/util/utils.h"
+
 namespace pprofcpp {
 
 constexpr char kSelfExePath[] = "/proc/self/exe";
@@ -160,7 +162,7 @@ bool BfdSymbolLocator::FindMatchedLib(FileMatchMeta* meta) {
   return false;
 }
 
-LocatorStatus BfdSymbolLocator::GetOrCreateDynBfd(const std::string& file, fustsdk::BfdAccessor** bfd_info_ptr) {
+LocatorStatus BfdSymbolLocator::GetOrCreateDynBfd(const std::string& file, BfdAccessor** bfd_info_ptr) {
   {
     std::shared_lock<std::shared_mutex> locker(rw_mutex_);
     if (auto iter = this->dynamic_bfds_.find(file); iter != this->dynamic_bfds_.cend()) {
@@ -201,7 +203,7 @@ LocatorStatus BfdSymbolLocator::SearchSymbol(const void* addr, SymbolInfo* sym_i
 }
 
 LocatorStatus BfdSymbolLocator::SearchDynamic(const FileMatchMeta& match, SymbolInfo* sym_info) {
-  fustsdk::BfdAccessor* bfd_info_ptr{nullptr};
+  BfdAccessor* bfd_info_ptr{nullptr};
   if (auto ret = this->GetOrCreateDynBfd(match.file, &bfd_info_ptr); ret.ret != LocatorRetCode::kOK) {
     return ret;
   }

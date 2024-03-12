@@ -159,7 +159,7 @@ class BfdSymbolLocator : public SymbolLocator {
   LocatorStatus SearchBfd(const void* addr, const BfdAccessor* bfd_info_ptr, SymbolInfo* sym_info);
   LocatorStatus SearchSymbol(const void* addr, SymbolInfo* sym_info);
   bool FindMatchedLib(FileMatchMeta* meta);
-  LocatorStatus GetOrCreateDynBfd(const std::string& file, fustsdk::BfdAccessor** bfd_info_ptr);
+  LocatorStatus GetOrCreateDynBfd(const std::string& file, BfdAccessor** bfd_info_ptr);
   LocatorStatus SearchDynamic(const FileMatchMeta& match, SymbolInfo* sym_info);
 
  private:

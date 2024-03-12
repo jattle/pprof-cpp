@@ -24,7 +24,7 @@ cc_test(
     name = "cpu_profile_test",
     srcs = ["cpu_profile_test.cc"],
     copts = ["-fno-access-control"],
-    data = ["cpu_profile_sample"],
+    data = ["//profiling/io:cpu_profile_sample"],
     deps = [
         ":cpu_profile",
         "@com_google_googletest//:gtest_main",

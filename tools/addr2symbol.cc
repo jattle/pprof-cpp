@@ -13,8 +13,8 @@ int main(int argc, char* argv[]) {
     google::ShowUsageWithFlags(argv[0]);
     return 1;
   }
-  fustsdk::BfdSymbolLocator locator{FLAGS_exe, FLAGS_proc_mapping};
-  fustsdk::SymbolInfo sym_info;
+  pprofcpp::BfdSymbolLocator locator{FLAGS_exe, FLAGS_proc_mapping};
+  pprofcpp::SymbolInfo sym_info;
   constexpr size_t kBufferSize = 32;
   char buffer[kBufferSize] = {0};
   if (FLAGS_addr.length() > 2u && strncasecmp(FLAGS_addr.c_str(), "0x", 2u) == 0) {
@@ -28,9 +28,9 @@ int main(int argc, char* argv[]) {
   void* addr{nullptr};
   sscanf(buffer, "%p", &addr);
   std::vector<void*> addrs{addr};
-  std::unordered_map<void*, fustsdk::SymbolInfo> sym_mapping;
+  std::unordered_map<void*, pprofcpp::SymbolInfo> sym_mapping;
   auto st = locator.SearchSymbols(addrs, &sym_mapping);
-  if (st.ret == fustsdk::LocatorRetCode::kOK) {
+  if (st.ret == pprofcpp::LocatorRetCode::kOK) {
     fprintf(stderr, "addr: %#018lx, symbol: %s\n", reinterpret_cast<uintptr_t>(addr),
             sym_mapping[addr].symbol_name.c_str());
   }
