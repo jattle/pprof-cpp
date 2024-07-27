@@ -13,19 +13,21 @@
 
 #include "fust/fustsdk/profiling/profile_symbol.h"
 
-namespace pprofcpp {
+namespace fustsdk {
 
 ReaderRetCode CPUProfile::Parse() {
   CPUProfileReader reader(std::move(this->is_));
-  if (auto st = reader.GetStatus(); st != ReaderRetCode::kOK) {
-    return st;
-  }
+#define RETURN_IF_NOT_EXPECTED(expr, expected) \
+  do {                                         \
+    auto ret = (expr);                         \
+    if (ret != (expected)) return ret;         \
+  } while (0);
   // read header
   size_t index = 0;
-  reader.GetSlot(index++, &this->binary_header_.hdr_count);
-  reader.GetSlot(index++, &this->binary_header_.hdr_words);
-  reader.GetSlot(index++, &this->binary_header_.version);
-  reader.GetSlot(index++, &this->binary_header_.sampling_period);
+  RETURN_IF_NOT_EXPECTED(reader.GetSlot(index++, &this->binary_header_.hdr_count), ReaderRetCode::kOK);
+  RETURN_IF_NOT_EXPECTED(reader.GetSlot(index++, &this->binary_header_.hdr_words), ReaderRetCode::kOK);
+  RETURN_IF_NOT_EXPECTED(reader.GetSlot(index++, &this->binary_header_.version), ReaderRetCode::kOK);
+  RETURN_IF_NOT_EXPECTED(reader.GetSlot(index++, &this->binary_header_.sampling_period), ReaderRetCode::kOK);
   if (auto st = reader.GetSlot(index++, &this->binary_header_.padding); st != ReaderRetCode::kOK) {
     return st;
   }
@@ -33,9 +35,9 @@ ReaderRetCode CPUProfile::Parse() {
   bool end_of_slots{false};
   while (true) {
     size_t sample_count, num_pcs, pc{0};
-    reader.GetSlot(index++, &sample_count);
-    reader.GetSlot(index++, &num_pcs);
-    reader.GetSlot(index++, &pc);
+    RETURN_IF_NOT_EXPECTED(reader.GetSlot(index++, &sample_count), ReaderRetCode::kOK);
+    RETURN_IF_NOT_EXPECTED(reader.GetSlot(index++, &num_pcs), ReaderRetCode::kOK);
+    RETURN_IF_NOT_EXPECTED(reader.GetSlot(index++, &pc), ReaderRetCode::kOK);
     if (pc == 0) {
       // Binary Trailer found: gperftools/docs/cpuprofile-fileformat.html
       // end of slots
@@ -52,7 +54,7 @@ ReaderRetCode CPUProfile::Parse() {
       }
       stack.ptrs.emplace_back(reinterpret_cast<void*>(val));
     }
-    this->sample_num_ += sample_count;
+    this->total_sample_cnt_ += sample_count;
     this->record_num_++;
     this->ptr_num_ += stack.ptrs.size();
     this->stacks_.emplace_back(std::move(stack));
@@ -67,7 +69,9 @@ ReaderRetCode CPUProfile::Parse() {
     if (ParseMapsText(maps_text) != 0) {
       return ReaderRetCode::kEmptyMapsText;
     }
+    this->maps_text_ = std::move(maps_text);
   }
+#undef RETURN_IF_NOT_EXPECTED
   return ReaderRetCode::kOK;
 }
 
@@ -141,7 +145,7 @@ CPUProfileRetCode CPUProfile::GenerateSymbolMapping(SymbolLocator* locator) {
   return CPUProfileRetCode::kOK;
 }
 
-/// @brief generate symbolized profile(similar to file genreated by pprof --raw)
+/// @brief generate raw profile(similar to file genreated by pprof --raw)
 CPUProfileRetCode CPUProfile::GenerateRawProfile(const RawProfileMeta& meta, SymbolLocator* locator,
                                                  std::string* profile) {
   if (meta.program_path.empty()) {
@@ -173,26 +177,33 @@ CPUProfileRetCode CPUProfile::GenerateRawProfile(const RawProfileMeta& meta, Sym
 CPUProfileRetCode CPUProfile::GenerateBinaryProfile(const RawProfileMeta& meta, std::string* content) {
   std::shared_ptr<std::ostream> os = std::make_shared<std::ostringstream>();
   CPUProfileWriter writer{os, this->binary_header_};
-  if (writer.GetStatus() != WriterRetCode::kOK) {
-    return CPUProfileRetCode::kGenProfileFailed;
-  }
+#define RETURN_IF_NOT_EXPECTED(expr, expected)                          \
+  do {                                                                  \
+    auto ret = (expr);                                                  \
+    if (ret != (expected)) return CPUProfileRetCode::kGenProfileFailed; \
+  } while (0);
   // dump stack
   for (const auto& s : this->stacks_) {
     // sample count, num_pc, pc
-    writer.AppendSlot(s.sample_count);
-    writer.AppendSlot(s.ptrs.size());
-    writer.AppendSlot(reinterpret_cast<uintptr_t>(s.ptrs.at(0)));
+    RETURN_IF_NOT_EXPECTED(writer.AppendSlot(s.sample_count), WriterRetCode::kOK);
+    RETURN_IF_NOT_EXPECTED(writer.AppendSlot(s.ptrs.size()), WriterRetCode::kOK);
+    RETURN_IF_NOT_EXPECTED(writer.AppendSlot(reinterpret_cast<uintptr_t>(s.ptrs.at(0))), WriterRetCode::kOK);
     for (size_t i = 1; i < s.ptrs.size(); i++) {
       if (meta.profile_type == RawProfileType::kPProfCompatible) {
         // call ptr is subtracted by 1
-        writer.AppendSlot(reinterpret_cast<uintptr_t>(s.ptrs.at(i)) - 1);
+        RETURN_IF_NOT_EXPECTED(writer.AppendSlot(reinterpret_cast<uintptr_t>(s.ptrs.at(i)) - 1), WriterRetCode::kOK);
       } else if (meta.profile_type == RawProfileType::kFixedRaw) {
-        writer.AppendSlot(reinterpret_cast<uintptr_t>(s.ptrs.at(i)));
+        RETURN_IF_NOT_EXPECTED(writer.AppendSlot(reinterpret_cast<uintptr_t>(s.ptrs.at(i))), WriterRetCode::kOK);
       }
     }
   }
+  // dump trailer
+  RETURN_IF_NOT_EXPECTED(writer.AppendSlot(0), WriterRetCode::kOK);
+  RETURN_IF_NOT_EXPECTED(writer.AppendSlot(1), WriterRetCode::kOK);
+  RETURN_IF_NOT_EXPECTED(writer.AppendSlot(0), WriterRetCode::kOK);
   // we dont need maps text here
   *content = static_cast<std::ostringstream*>(os.get())->str();
+#undef RETURN_IF_NOT_EXPECTED
   return CPUProfileRetCode::kOK;
 }
 
@@ -221,18 +232,21 @@ std::string CPUProfile::ToString() {
   report.append(fmt::format("version: {}\n", this->binary_header_.version));
   report.append(fmt::format("sampling_period: {}\n", this->binary_header_.sampling_period));
   report.append(fmt::format("padding: {}\n", this->binary_header_.padding));
-  report.append(fmt::format("profile num: {}, sample num: {}, call stack num: {}, address nums: {}\n", 
-  this->record_num_, this->sample_num_, this->stacks_.size(), this->ptr_num_));
+  report.append(fmt::format("profile num: {}, total sample num: {}, call stack num: {}, ptr nums: {}\n",
+                            this->record_num_, this->total_sample_cnt_, this->stacks_.size(), this->ptr_num_));
   report.append(fmt::format("---------------Stacks:\n"));
+  std::unordered_set<void*> dedupped_ptrs;
   char buf[20] = {0};
   for (const auto& s : this->stacks_) {
     for (const auto& ptr : s.ptrs) {
-      size_t n = snprintf(buf, sizeof(buf), "%#018lx\t", reinterpret_cast<uintptr_t>(ptr));
+      size_t n = snprintf(buf, sizeof(buf), "%#018lx ", reinterpret_cast<uintptr_t>(ptr));
       report.append(buf, buf + n);
+      dedupped_ptrs.insert(ptr);
     }
     report.append("\n");
   }
+  report.append(fmt::format("distinct ptr num: {}\n", dedupped_ptrs.size()));
   return report;
 }
 
-}  // namespace pprofcpp
+}  // namespace fustsdk

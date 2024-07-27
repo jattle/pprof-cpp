@@ -1,7 +1,6 @@
 /*
  * FileName profile_io.h
  * Author jattle
- * Copyright (c) 2024 jattle 
  * Description: gperftools CPU Profile low level file reader,
  * will parse file and return raw data
  */
@@ -15,7 +14,7 @@
 #include <string>
 #include <vector>
 
-namespace pprofcpp {
+namespace fustsdk {
 
 /// @brief binary header of gperftool generated cpu profile
 struct CPUProfileBinaryHeader {
@@ -30,21 +29,21 @@ inline bool operator==(const CPUProfileBinaryHeader& l, const CPUProfileBinaryHe
   return memcmp(&l, &r, sizeof(CPUProfileBinaryHeader)) == 0;
 }
 
-/// @brief  value unpack type
 enum class UnpackType {
   kNone = 0,
   kLittleEndian = 1,
   kBigEndian = 2,
 };
 
-/// @brief  machine address len of profile
 enum class ProfileAddressLen {
   kNone = 0,
   k64Bit = 1,
   k32Bit = 2,
 };
 
-/// @brief  profile reader retcode
+constexpr size_t k32BitSize = 4;
+constexpr size_t k64BitSize = 8;
+
 enum class ReaderRetCode {
   kOK = 0,
   kInvalidStream = 1,
@@ -57,44 +56,36 @@ enum class ReaderRetCode {
   kEmptyMapsText = 16,
 };
 
-/// @brief  cpu profile reader
 class CPUProfileReader {
  public:
   explicit CPUProfileReader(const std::string& file);
   explicit CPUProfileReader(std::unique_ptr<std::istream> is);
   ~CPUProfileReader() = default;
   ReaderRetCode GetSlot(size_t index, size_t* val);
-  // @brief get current reader status
-  ReaderRetCode GetStatus() const { return status_; }
-  // @brief get current reader error msg
-  const std::string& GetErrorMsg() const { return error_msg_; }
-  // @brief read content left in file
+  /// @brief read content left in file
   ReaderRetCode ReadLeftContent(std::string* content);
 
  private:
-  void Init();
-  int NextSlot();
+  ReaderRetCode Init();
+  ReaderRetCode NextSlot();
   template <size_t N>
-  size_t ReadNextNChar(char buffer[N]) {
+  int ReadNextNChar(char (&buffer)[N]) {
     if (is_->read(buffer, N); !is_->good()) {
       if (is_->eof()) {
-        status_ = ReaderRetCode::kEndOfFile;
+        return is_->gcount();
       } else {
-        status_ = ReaderRetCode::kReadError;
-        error_msg_ = strerror(errno);
+        // error
+        return -1;
       }
-    } else {
-      status_ = ReaderRetCode::kOK;
     }
     return is_->gcount();
   }
-  bool Bit32Convert(char buffer[4], size_t* val);
-  bool Bit64Convert(char buffer[8], size_t* val);
+  bool Bit32Convert(char (&buffer)[k32BitSize], size_t* val);
+  bool Bit64Convert(char (&buffer)[k64BitSize], size_t* val);
 
   std::string file_name_;
   std::unique_ptr<std::istream> is_;
-  ReaderRetCode status_{ReaderRetCode::kNotInited};
-  std::string error_msg_;
+  ReaderRetCode init_status_{ReaderRetCode::kNotInited};
   UnpackType unpack_type_{UnpackType::kNone};
   ProfileAddressLen address_len_{ProfileAddressLen::kNone};
   size_t hdr_count_{0};
@@ -102,21 +93,20 @@ class CPUProfileReader {
   std::vector<size_t> slots_;
 };
 
-/// @brief writer retcode
 enum class WriterRetCode {
   kOK = 0,
   kNotInited = 20,
   kWriteError = 21,
   kConvertErr = 22,
+  kInvalidStream = 23,
+  kInvalidAddrLen = 24,
 };
 
-/// @brief cpu profile metadata
 struct CPUProfileMetaData {
   UnpackType unpack_type{UnpackType::kLittleEndian};
   ProfileAddressLen address_len{ProfileAddressLen::k64Bit};
 };
 
-/// @brief cpu profile writer
 class CPUProfileWriter {
  public:
   CPUProfileWriter(std::shared_ptr<std::ostream> os, const CPUProfileBinaryHeader& header,
@@ -134,31 +124,24 @@ class CPUProfileWriter {
   ~CPUProfileWriter() = default;
   WriterRetCode AppendSlot(size_t val);
   WriterRetCode AppendMapsText(const std::string& text);
-  /// @brief get current reader status
-  WriterRetCode GetStatus() const { return status_; }
-  /// @brief get current reader error msg
-  const std::string& GetErrorMsg() const { return error_msg_; }
 
  private:
-  void Init();
-  bool Bit32Convert(size_t val, char buffer[4]);
-  bool Bit64Convert(size_t val, char buffer[8]);
+  WriterRetCode Init();
+  bool Bit32Convert(size_t val, char (&buffer)[k32BitSize]);
+  bool Bit64Convert(size_t val, char (&buffer)[k64BitSize]);
   template <size_t N>
-  bool WriteNextNChar(char buffer[N]) {
+  int WriteNextNChar(char (&buffer)[N]) {
     if (os_->write(buffer, N); !os_->good()) {
-      status_ = WriterRetCode::kWriteError;
-      error_msg_ = strerror(errno);
-      return false;
+      return -1;
     }
-    status_ = WriterRetCode::kOK;
-    return true;
+    return N;
   }
 
   std::shared_ptr<std::ostream> os_;
   CPUProfileBinaryHeader header_;
   CPUProfileMetaData meta_;
-  WriterRetCode status_{WriterRetCode::kNotInited};
+  WriterRetCode init_status_{WriterRetCode::kNotInited};
   std::string error_msg_;
 };
 
-}  // namespace pprofcpp
+}  // namespace fustsdk
