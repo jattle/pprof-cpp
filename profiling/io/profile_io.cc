@@ -5,32 +5,31 @@
  */
 #include "profiling/io/profile_io.h"
 
+#include "profiling/util/endian.h"
+
 #include <cassert>
 #include <cstring>
 
-#include "profiling/util/endian.h"
-
-namespace pprofcpp {
+namespace fustsdk {
 
 CPUProfileReader::CPUProfileReader(const std::string& file) : file_name_(file) {
   this->is_ = std::make_unique<std::ifstream>(file.c_str(), std::ios_base::binary);
-  Init();
+  this->init_status_ = Init();
 }
 
 CPUProfileReader::CPUProfileReader(std::unique_ptr<std::istream> is) {
   this->is_ = std::move(is);
-  Init();
+  this->init_status_ = Init();
 }
 
 ReaderRetCode CPUProfileReader::GetSlot(size_t index, size_t* val) {
+  if (init_status_ != ReaderRetCode::kOK) {
+    return init_status_;
+  }
   if (index >= slots_.size()) {
-    // try next slot
-    if (status_ != ReaderRetCode::kOK) {
-      return status_;
-    }
     do {
-      if (auto ret = NextSlot(); ret != 0) {
-        return status_;
+      if (auto ret = NextSlot(); ret != ReaderRetCode::kOK) {
+        return ret;
       }
     } while (slots_.size() <= index);
   }
@@ -38,7 +37,7 @@ ReaderRetCode CPUProfileReader::GetSlot(size_t index, size_t* val) {
   return ReaderRetCode::kOK;
 }
 
-void CPUProfileReader::Init() {
+ReaderRetCode CPUProfileReader::Init() {
   // reference: https://github.com/gperftools/gperftools/blob/master/docs/cpuprofile-fileformat.html
   /// Binary Header Format
   /// slot    data
@@ -51,13 +50,12 @@ void CPUProfileReader::Init() {
   // 以下只解析header的前两个slot，对于32位address len，每个Slot占用4字节，对于64位address len，每个Slot占用8字节
   // 首先根据第一个Slot确定address len，再根据第二个Slot判断pack类型是big endian还是little endian
   if (!this->is_->good()) {
-    error_msg_ = "open file " + file_name_ + " failed: " + strerror(errno);
-    status_ = ReaderRetCode::kInvalidStream;
-    return;
+    this->init_status_ = ReaderRetCode::kInvalidStream;
+    return ReaderRetCode::kInvalidStream;
   }
   char buffer[8] = {0};
   if (ReadNextNChar<sizeof(buffer)>(buffer) != sizeof(buffer)) {
-    return;
+    return ReaderRetCode::kReadError;
   }
   if (*reinterpret_cast<uint64_t*>(buffer) == 0) {
     address_len_ = ProfileAddressLen::k64Bit;
@@ -67,7 +65,7 @@ void CPUProfileReader::Init() {
   if (address_len_ == ProfileAddressLen::k64Bit) {
     // 读取第二个slot(hdr_words)判断
     if (ReadNextNChar<sizeof(buffer)>(buffer) != sizeof(buffer)) {
-      return;
+      return ReaderRetCode::kReadError;
     }
     if (*reinterpret_cast<uint32_t*>(&buffer[0]) == 0) {
       unpack_type_ = UnpackType::kBigEndian;
@@ -76,8 +74,7 @@ void CPUProfileReader::Init() {
       unpack_type_ = UnpackType::kLittleEndian;
       hdr_words_ = le64toh(*reinterpret_cast<uint64_t*>(buffer));
     } else {
-      status_ = ReaderRetCode::kInvalidUnpackType;
-      return;
+      return ReaderRetCode::kInvalidUnpackType;
     }
   } else if (address_len_ == ProfileAddressLen::k32Bit) {
     // 第二个4字节是hdr_words
@@ -90,17 +87,16 @@ void CPUProfileReader::Init() {
       unpack_type_ = UnpackType::kLittleEndian;
       hdr_words_ = le32toh(*reinterpret_cast<uint32_t*>(&buffer[4]));
     } else {
-      status_ = ReaderRetCode::kInvalidUnpackType;
-      return;
+      return ReaderRetCode::kInvalidUnpackType;
     }
   }
   slots_.emplace_back(0);
   slots_.emplace_back(hdr_words_);
-  status_ = ReaderRetCode::kOK;
-  return;
+  this->init_status_ = ReaderRetCode::kOK;
+  return ReaderRetCode::kOK;
 }
 
-bool CPUProfileReader::Bit32Convert(char buffer[4], size_t* val) {
+bool CPUProfileReader::Bit32Convert(char (&buffer)[k32BitSize], size_t* val) {
   switch (unpack_type_) {
     case UnpackType::kLittleEndian:
       *val = le32toh(*reinterpret_cast<uint32_t*>(buffer));
@@ -113,7 +109,7 @@ bool CPUProfileReader::Bit32Convert(char buffer[4], size_t* val) {
   }
 }
 
-bool CPUProfileReader::Bit64Convert(char buffer[8], size_t* val) {
+bool CPUProfileReader::Bit64Convert(char (&buffer)[k64BitSize], size_t* val) {
   switch (unpack_type_) {
     case UnpackType::kLittleEndian:
       *val = le64toh(*reinterpret_cast<uint64_t*>(buffer));
@@ -126,36 +122,33 @@ bool CPUProfileReader::Bit64Convert(char buffer[8], size_t* val) {
   }
 }
 
-int CPUProfileReader::NextSlot() {
+ReaderRetCode CPUProfileReader::NextSlot() {
   if (address_len_ == ProfileAddressLen::k32Bit) {
-    char buffer[4];
+    char buffer[k32BitSize];
     if (auto ret = ReadNextNChar<sizeof(buffer)>(buffer); ret != sizeof(buffer)) {
-      return -1;
+      return ReaderRetCode::kReadError;
     }
     size_t val{0};
     if (Bit32Convert(buffer, &val)) {
       slots_.emplace_back(val);
-      return 0;
+      return ReaderRetCode::kOK;
     }
-    status_ = ReaderRetCode::kConvertErr;
-    return -1;
+    return ReaderRetCode::kConvertErr;
   }
   if (address_len_ == ProfileAddressLen::k64Bit) {
-    char buffer[8];
+    char buffer[k64BitSize];
     if (auto ret = ReadNextNChar<sizeof(buffer)>(buffer); ret != sizeof(buffer)) {
-      return -1;
+      return ReaderRetCode::kReadError;
     }
     size_t val{0};
     if (Bit64Convert(buffer, &val)) {
       slots_.emplace_back(val);
-      return 0;
+      return ReaderRetCode::kOK;
     }
-    status_ = ReaderRetCode::kConvertErr;
-    return -1;
+    return ReaderRetCode::kConvertErr;
   }
-  status_ = ReaderRetCode::kInvalidAddressLen;
   // unexpected address len
-  return -1;
+  return ReaderRetCode::kInvalidAddressLen;
 }
 
 /// @brief read content left in file
@@ -166,17 +159,16 @@ ReaderRetCode CPUProfileReader::ReadLeftContent(std::string* content) {
     if (bytes > 0) {
       content->append(buffer, buffer + bytes);
     }
-    if (bytes != sizeof(buffer)) {
-      break;
+    if (bytes == 0) {
+      return ReaderRetCode::kEndOfFile;
     }
   }
-  return status_;
+  return ReaderRetCode::kReadError;
 }
 
-void CPUProfileWriter::Init() {
+WriterRetCode CPUProfileWriter::Init() {
   if (os_->fail()) {
-    error_msg_ = std::string("invalid ostream: ") + strerror(errno);
-    return;
+    return WriterRetCode::kInvalidStream;
   }
   // writer binary header
   AppendSlot(header_.hdr_count);
@@ -184,9 +176,11 @@ void CPUProfileWriter::Init() {
   AppendSlot(header_.version);
   AppendSlot(header_.sampling_period);
   AppendSlot(header_.padding);
+  this->init_status_ = WriterRetCode::kOK;
+  return WriterRetCode::kOK;
 }
 
-bool CPUProfileWriter::Bit32Convert(size_t val, char buffer[4]) {
+bool CPUProfileWriter::Bit32Convert(size_t val, char (&buffer)[k32BitSize]) {
   uint32_t v{0};
   switch (meta_.unpack_type) {
     case UnpackType::kLittleEndian:
@@ -198,11 +192,11 @@ bool CPUProfileWriter::Bit32Convert(size_t val, char buffer[4]) {
     default:
       return false;
   }
-  memcpy(buffer, &v, 4);
+  memcpy(buffer, &v, sizeof(buffer));
   return true;
 }
 
-bool CPUProfileWriter::Bit64Convert(size_t val, char buffer[8]) {
+bool CPUProfileWriter::Bit64Convert(size_t val, char (&buffer)[k64BitSize]) {
   uint64_t v{0};
   switch (meta_.unpack_type) {
     case UnpackType::kLittleEndian:
@@ -214,35 +208,30 @@ bool CPUProfileWriter::Bit64Convert(size_t val, char buffer[8]) {
     default:
       return false;
   }
-  memcpy(buffer, &v, 8);
+  memcpy(buffer, &v, sizeof(buffer));
   return true;
 }
 
 WriterRetCode CPUProfileWriter::AppendSlot(size_t val) {
   if (meta_.address_len == ProfileAddressLen::k32Bit) {
-    char buffer[4];
+    char buffer[k32BitSize];
     if (!Bit32Convert(val, buffer)) {
-      return WriterRetCode::kWriteError;
+      return WriterRetCode::kConvertErr;
     }
-    WriteNextNChar<4>(buffer);
+    return WriteNextNChar<k32BitSize>(buffer) == k32BitSize ? WriterRetCode::kOK : WriterRetCode::kWriteError;
   } else if (meta_.address_len == ProfileAddressLen::k64Bit) {
-    char buffer[8];
+    char buffer[k64BitSize];
     if (!Bit64Convert(val, buffer)) {
-      return WriterRetCode::kWriteError;
+      return WriterRetCode::kConvertErr;
     }
-    WriteNextNChar<8>(buffer);
+    return WriteNextNChar<k64BitSize>(buffer) == k64BitSize ? WriterRetCode::kOK : WriterRetCode::kWriteError;
   }
-  return status_;
+  return WriterRetCode::kInvalidAddrLen;
 }
 
 WriterRetCode CPUProfileWriter::AppendMapsText(const std::string& text) {
   os_->write(text.data(), text.size());
-  if (os_->good()) {
-    return WriterRetCode::kOK;
-  }
-  status_ = WriterRetCode::kWriteError;
-  error_msg_ = strerror(errno);
-  return status_;
+  return os_->good() ? WriterRetCode::kOK : WriterRetCode::kWriteError;
 }
 
-}  // namespace pprofcpp
+}  // namespace fustsdk

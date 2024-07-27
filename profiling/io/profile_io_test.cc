@@ -11,16 +11,17 @@
 
 constexpr char kCPUProfileSample[] = "./profiling/io/cpu_profile_sample";
 
-using namespace pprofcpp;
+using namespace fustsdk;
 
 TEST(CPUProfileReader, InvalidFile) {
   CPUProfileReader reader("file_not_exists");
-  EXPECT_EQ(reader.GetStatus(), ReaderRetCode::kInvalidStream);
+  size_t val;
+  EXPECT_EQ(reader.GetSlot(0, &val), ReaderRetCode::kInvalidStream);
 }
 
 TEST(CPUProfileReader, BinaryHeader) {
   CPUProfileReader reader(kCPUProfileSample);
-  EXPECT_EQ(reader.GetStatus(), ReaderRetCode::kOK);
+  EXPECT_EQ(reader.init_status_, ReaderRetCode::kOK);
   EXPECT_EQ(reader.unpack_type_, UnpackType::kLittleEndian);
   EXPECT_EQ(reader.address_len_, ProfileAddressLen::k64Bit);
   // 0: header count, 1: hdr_words, 2: format version, 3: sampling period(in microseconds), 4: padding
@@ -39,7 +40,7 @@ TEST(CPUProfileReader, BinaryHeader) {
 
 TEST(CPUProfileReader, ProfileRecord) {
   CPUProfileReader reader(kCPUProfileSample);
-  EXPECT_EQ(reader.GetStatus(), ReaderRetCode::kOK);
+  EXPECT_EQ(reader.init_status_, ReaderRetCode::kOK);
   // skip to slot 5
   size_t val{0};
   // sample count
@@ -55,7 +56,7 @@ TEST(CPUProfileReader, ProfileRecord) {
 
 TEST(CPUProfileReader, ReadLeftContent) {
   CPUProfileReader reader(kCPUProfileSample);
-  EXPECT_EQ(reader.GetStatus(), ReaderRetCode::kOK);
+  EXPECT_EQ(reader.init_status_, ReaderRetCode::kOK);
   std::string content;
   auto st = reader.ReadLeftContent(&content);
   EXPECT_EQ(st, ReaderRetCode::kEndOfFile);
@@ -68,7 +69,7 @@ void WriteThenRead(const CPUProfileMetaData& meta) {
   CPUProfileBinaryHeader header;
   header.sampling_period = 1000;
   CPUProfileWriter writer{os, header, meta};
-  EXPECT_EQ(writer.GetStatus(), WriterRetCode::kOK);
+  EXPECT_EQ(writer.init_status_, WriterRetCode::kOK);
   // sample_count, num_pc, pc, call_ptr...
   std::vector<size_t> stack1{10, 4, 0x1, 0x20, 0x30, 0x40};
   for (const auto& item : stack1) {
@@ -85,7 +86,7 @@ void WriteThenRead(const CPUProfileMetaData& meta) {
   std::string profile = static_cast<std::stringstream*>(os.get())->str();
   std::unique_ptr<std::istream> is = std::make_unique<std::istringstream>(profile);
   CPUProfileReader reader{std::move(is)};
-  EXPECT_EQ(reader.GetStatus(), ReaderRetCode::kOK);
+  EXPECT_EQ(reader.init_status_, ReaderRetCode::kOK);
   EXPECT_EQ(reader.unpack_type_, meta.unpack_type);
   EXPECT_EQ(reader.address_len_, meta.address_len);
   CPUProfileBinaryHeader header1;
